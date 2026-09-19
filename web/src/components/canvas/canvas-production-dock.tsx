@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronUp, Clapperboard, Image as ImageIcon, Pause, Play, Plus, SkipBack, Sparkles, Users } from "lucide-react";
+import { BookOpen, ChevronDown, ChevronUp, Clapperboard, Globe2, Image as ImageIcon, Pause, Play, Plus, SkipBack, Sparkles, Users } from "lucide-react";
 import { nanoid } from "nanoid";
 
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import type { CanvasProduction, ProductionReference, ProductionShot } from "@/types/production";
 import type { CanvasTheme } from "@/lib/canvas-theme";
 
-type ProductionView = "timeline" | "characters" | "scenes";
+type ProductionView = "timeline" | "research" | "worlds" | "characters" | "scenes";
+type ReferenceKey = Exclude<ProductionView, "timeline">;
 
 export function CanvasProductionDock({
     nodes,
@@ -55,10 +56,10 @@ export function CanvasProductionDock({
         if (additions.length) onChange({ ...production, shots: [...production.shots, ...additions], activeShotId: additions[0].id });
     };
 
-    const addReferences = (key: "characters" | "scenes") => {
-        const existing = new Set(production[key].map((item) => item.nodeId));
+    const addReferences = (key: ReferenceKey) => {
+        const existing = new Set((production[key] || []).map((item) => item.nodeId));
         const additions = selectedNodes.filter((node) => !existing.has(node.id)).map<ProductionReference>((node) => ({ id: nanoid(), title: node.title, nodeId: node.id, description: node.metadata?.prompt || node.metadata?.content || "", createdAt: new Date().toISOString() }));
-        if (additions.length) onChange({ ...production, [key]: [...production[key], ...additions] });
+        if (additions.length) onChange({ ...production, [key]: [...(production[key] || []), ...additions] });
     };
 
     const selectShot = (shot: ProductionShot) => {
@@ -72,6 +73,8 @@ export function CanvasProductionDock({
             <header className="flex h-[38px] items-center justify-between px-3">
                 <nav className="flex h-full items-center gap-1" aria-label="制片工作区">
                     <Tab active={view === "timeline"} theme={theme} icon={<Clapperboard className="size-3.5" />} label="时间线" count={production.shots.length} onClick={() => (setView("timeline"), setOpen(true))} />
+                    <Tab active={view === "research"} theme={theme} icon={<BookOpen className="size-3.5" />} label="研究" count={production.research?.length || 0} onClick={() => (setView("research"), setOpen(true))} />
+                    <Tab active={view === "worlds"} theme={theme} icon={<Globe2 className="size-3.5" />} label="世界" count={production.worlds?.length || 0} onClick={() => (setView("worlds"), setOpen(true))} />
                     <Tab active={view === "characters"} theme={theme} icon={<Users className="size-3.5" />} label="角色" count={production.characters.length} onClick={() => (setView("characters"), setOpen(true))} />
                     <Tab active={view === "scenes"} theme={theme} icon={<ImageIcon className="size-3.5" />} label="场景" count={production.scenes.length} onClick={() => (setView("scenes"), setOpen(true))} />
                 </nav>
@@ -128,7 +131,7 @@ export function CanvasProductionDock({
             ) : null}
 
             {open && view !== "timeline" ? (
-                <ReferenceShelf kind={view} items={view === "characters" ? production.characters : production.scenes} selectedCount={selectedNodes.length} theme={theme} nodeById={nodeById} onAdd={() => addReferences(view)} onFocusNode={onFocusNode} />
+                <ReferenceShelf kind={view} items={production[view] || []} selectedCount={selectedNodes.length} theme={theme} nodeById={nodeById} onAdd={() => addReferences(view)} onFocusNode={onFocusNode} />
             ) : null}
         </div>
     );
@@ -143,19 +146,25 @@ function ShotPreview({ node }: { node?: CanvasNodeData }) {
     return <span className="grid size-full place-items-center bg-gradient-to-br from-stone-700 to-stone-900"><Play className="size-5 text-white/45" /></span>;
 }
 
-function ReferenceShelf({ kind, items, selectedCount, theme, nodeById, onAdd, onFocusNode }: { kind: "characters" | "scenes"; items: ProductionReference[]; selectedCount: number; theme: CanvasTheme; nodeById: Map<string, CanvasNodeData>; onAdd: () => void; onFocusNode: (nodeId: string) => void }) {
+function ReferenceShelf({ kind, items, selectedCount, theme, nodeById, onAdd, onFocusNode }: { kind: ReferenceKey; items: ProductionReference[]; selectedCount: number; theme: CanvasTheme; nodeById: Map<string, CanvasNodeData>; onAdd: () => void; onFocusNode: (nodeId: string) => void }) {
+    const copy = {
+        research: { title: "研究资料", description: "把事实、摘录与知识节点留在创作链上。", empty: "研究资料", icon: <BookOpen className="size-5 opacity-35" /> },
+        worlds: { title: "游戏世界", description: "把研究映射为地点、规则、任务与叙事机制。", empty: "世界设定", icon: <Globe2 className="size-5 opacity-35" /> },
+        characters: { title: "角色圣经", description: "把人物参考、外观与性格绑定到画布节点。", empty: "角色参考", icon: <Users className="size-5 opacity-35" /> },
+        scenes: { title: "场景库", description: "沉淀地点、光线与美术风格，供镜头复用。", empty: "场景素材", icon: <ImageIcon className="size-5 opacity-35" /> },
+    }[kind];
     return (
         <div className="flex h-[176px] border-t" style={{ borderColor: theme.toolbar.border }}>
             <div className="w-[180px] shrink-0 border-r p-3" style={{ borderColor: theme.toolbar.border }}>
-                <p className="text-xs font-medium">{kind === "characters" ? "角色圣经" : "场景库"}</p>
-                <p className="mt-1 text-[10px] leading-4" style={{ color: theme.node.muted }}>{kind === "characters" ? "把人物参考、外观与性格绑定到画布节点。" : "沉淀地点、光线与美术风格，供镜头复用。"}</p>
+                <p className="text-xs font-medium">{copy.title}</p>
+                <p className="mt-1 text-[10px] leading-4" style={{ color: theme.node.muted }}>{copy.description}</p>
                 <button type="button" disabled={!selectedCount} onClick={onAdd} className="mt-3 flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs transition hover:bg-black/5 disabled:opacity-35 dark:hover:bg-white/10"><Plus className="size-3.5" /> 从选中节点添加</button>
             </div>
             <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto p-3">
                 {items.length ? items.map((item) => {
                     const node = nodeById.get(item.nodeId);
-                    return <button type="button" key={item.id} onClick={() => onFocusNode(item.nodeId)} className="group flex w-[210px] shrink-0 overflow-hidden rounded-lg border text-left transition hover:-translate-y-0.5" style={{ borderColor: theme.node.stroke, background: theme.node.panel }}><div className="w-20 shrink-0 overflow-hidden" style={{ background: theme.node.fill }}>{node?.metadata?.content && node.type === CanvasNodeType.Image ? <img src={node.metadata.content} alt="" className="size-full object-cover" /> : <span className="grid size-full place-items-center">{kind === "characters" ? <Users className="size-5 opacity-35" /> : <ImageIcon className="size-5 opacity-35" />}</span>}</div><div className="min-w-0 p-2.5"><strong className="block truncate text-xs">{item.title}</strong><p className="mt-1 line-clamp-3 text-[10px] leading-4" style={{ color: theme.node.muted }}>{item.description || "等待补充设定"}</p></div></button>;
-                }) : <div className="flex flex-1 items-center justify-center text-xs" style={{ color: theme.node.faint }}>从画布选择{kind === "characters" ? "角色参考" : "场景素材"}后添加</div>}
+                    return <button type="button" key={item.id} onClick={() => onFocusNode(item.nodeId)} className="group flex w-[210px] shrink-0 overflow-hidden rounded-lg border text-left transition hover:-translate-y-0.5" style={{ borderColor: theme.node.stroke, background: theme.node.panel }}><div className="w-20 shrink-0 overflow-hidden" style={{ background: theme.node.fill }}>{node?.metadata?.content && node.type === CanvasNodeType.Image ? <img src={node.metadata.content} alt="" className="size-full object-cover" /> : <span className="grid size-full place-items-center">{copy.icon}</span>}</div><div className="min-w-0 p-2.5"><strong className="block truncate text-xs">{item.title}</strong><p className="mt-1 line-clamp-3 text-[10px] leading-4" style={{ color: theme.node.muted }}>{item.description || "等待补充设定"}</p></div></button>;
+                }) : <div className="flex flex-1 items-center justify-center text-xs" style={{ color: theme.node.faint }}>从画布选择{copy.empty}后添加</div>}
             </div>
         </div>
     );

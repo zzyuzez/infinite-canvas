@@ -14,6 +14,8 @@ export type ProductionShot = ProductionReference & {
 };
 
 export type CanvasProduction = {
+    research: ProductionReference[];
+    worlds: ProductionReference[];
     characters: ProductionReference[];
     scenes: ProductionReference[];
     shots: ProductionShot[];
@@ -23,6 +25,8 @@ export type CanvasProduction = {
 };
 
 export const createEmptyProduction = (): CanvasProduction => ({
+    research: [],
+    worlds: [],
     characters: [],
     scenes: [],
     shots: [],
