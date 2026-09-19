@@ -74,7 +74,9 @@ import { registerBuiltinNodes } from "@/components/canvas/nodes/builtin-nodes";
 import { CanvasPluginManagerModal } from "@/components/canvas/canvas-plugin-manager-modal";
 import { CanvasRefreshShell } from "@/components/canvas/canvas-refresh-shell";
 import { CanvasTopBar } from "@/components/canvas/canvas-top-bar";
+import { CanvasProductionDock } from "@/components/canvas/canvas-production-dock";
 import { ConnectionCreateMenu, NodeCreateMenu, type PendingConnectionCreate } from "@/components/canvas/canvas-create-menus";
+import { createEmptyProduction } from "@/types/production";
 import {
     CanvasNodeType,
     type CanvasAssistantImage,
@@ -3317,6 +3319,15 @@ function InfiniteCanvasPage() {
                 {isMiniMapOpen ? <Minimap nodes={nodes} viewport={viewport} viewportSize={size} onViewportChange={setViewport} /> : null}
 
                 <CanvasZoomControls scale={viewport.k} onScaleChange={setZoomScale} onReset={resetViewport} isMiniMapOpen={isMiniMapOpen} onToggleMiniMap={() => setIsMiniMapOpen((value) => !value)} />
+
+                <CanvasProductionDock
+                    nodes={nodes}
+                    selectedNodeIds={selectedNodeIds}
+                    production={currentProject?.production || createEmptyProduction()}
+                    theme={theme}
+                    onChange={(production) => updateProject(projectId, { production })}
+                    onFocusNode={focusNode}
+                />
 
                 {contextMenu ? (
                     <CanvasNodeContextMenu
