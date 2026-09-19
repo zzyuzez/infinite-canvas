@@ -7,6 +7,7 @@ description: Implemented changes that still need manual verification
 
 The current release needs manual verification in these areas:
 
+- Docker / Render 构建：依赖安装应严格使用 `web/bun.lock`，全新构建时 Mermaid 等依赖应能正常下载解压并继续执行 Vite 构建，不再复用损坏的 Bun 包缓存。
 - 视频制片坞：选择视频节点后可加入时间线，镜头顺序、时长、来源节点与激活状态应保存在当前画布项目中；角色和场景页签可从选中节点建立引用，点击卡片或镜头应定位回原画布节点，折叠制片坞后画布操作仍应正常。
 - 研究与游戏世界：研究、世界、角色、场景四类资料应可分别从当前选中节点建立项目引用，刷新、导出再导入后仍保留；点击卡片应定位到来源节点，已有画布项目缺少新字段时仍能正常打开并首次保存。
 
