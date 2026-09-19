@@ -1,14 +1,15 @@
 import { spawn } from "node:child_process";
+import crypto from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import express, { type NextFunction, type Request, type Response } from "express";
 
-import { runClaudeTurn } from "../agent/claude.js";
-import { archiveCodexThread, CodexSkillLookupError, configureCodexSkill, generateCodexSkillDraft, interruptCodexTurn, isRecoverableThreadError, listCodexModels, listCodexSkills, listCodexThreads, readCodexThread, resolveCodexApproval, resolveCodexSkill, resumeCodexThread, runCodexTurn, startCodexThread, summarizeCodexThread } from "../agent/codex.js";
+import { interruptExternalTurn, runExternalTurn } from "../agent/external.js";
+import { archiveCodexThread, CodexSkillLookupError, configureCodexSkill, generateCodexSkillDraft, interruptCodexTurn, listCodexModels, listCodexSkills, listCodexThreads, readCodexThread, resolveCodexApproval, resolveCodexSkill, resumeCodexThread, runCodexTurn, startCodexThread, stopCodexApp, summarizeCodexThread } from "../agent/codex.js";
 import type { CodexReasoningEffort, CodexSkillSelector } from "../agent/codex-protocol.js";
 import { messageMetadataStore } from "../agent/message-metadata.js";
 import type { AgentAttachment, AgentPermissionMode } from "../agent/types.js";
-import { AGENT_PROTOCOL_VERSION, CanvasSession } from "../canvas/session.js";
+import { AGENT_PROTOCOL_VERSION, CanvasSession, type AgentKind } from "../canvas/session.js";
 import { DEFAULT_PORT, ensureSiteWorkspace, loadConfig, saveConfig, updateSiteWorkspace, type CanvasAgentConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
 import { checkVersions } from "../version-check.js";
@@ -22,7 +23,7 @@ export function startHttpServer() {
     saveConfig(config);
 
     const initialWorkspace = ensureSiteWorkspace(config);
-    const session = new CanvasSession(initialWorkspace.activeThreadId || "");
+    const session = new CanvasSession();
     const skillStore = new SkillStore(initialWorkspace.workspacePath);
     /** 将 Agent 事件广播到所属线程或全部网页。 */
     const emit = (type: string, payload: unknown) => {
@@ -121,13 +122,14 @@ export function startHttpServer() {
         next();
     });
     app.get("/health", (_req, res) => res.json(session.health()));
-    app.get("/config", (_req, res) => res.json({ ok: true, protocolVersion: AGENT_PROTOCOL_VERSION, url: config.url, hasToken: true }));
+    app.get("/config", (_req, res) => res.json({ ok: true, protocolVersion: AGENT_PROTOCOL_VERSION, url: config.url, hasToken: true, agent: session.selectedAgent }));
     app.use((req, res, next) => {
         if (validToken(req, requestUrl(req, config), config.token)) return next();
         res.status(401).json({ ok: false, error: "invalid token" });
     });
     app.get("/events", (req, res) => {
-        session.openEvents(requestUrl(req, config), res, ensureSiteWorkspace(config).activeThreadId || "");
+        const activeThreadId = session.selectedAgent === "codex" ? ensureSiteWorkspace(config).activeThreadId || "" : session.conversationStateSnapshot.threadId;
+        session.openEvents(requestUrl(req, config), res, activeThreadId);
     });
     app.post("/canvas/state", (req, res) => {
         session.updateState(req.body, String(req.query.clientId || "") || undefined);
@@ -170,6 +172,70 @@ export function startHttpServer() {
         res.type(path.extname(filePath)).send(await readFile(filePath));
     }));
     app.post("/api/tools", route(async (req, res) => res.json({ ok: true, result: await session.callTool(req.body?.name, req.body?.input || {}) })));
+    app.get("/agent/runtime", (_req, res) => res.json({ ok: true, agent: session.selectedAgent, conversation: session.conversationStateSnapshot }));
+    app.post("/agent/runtime", route(async (req, res) => {
+        const agent = agentKind(req.body?.agent);
+        const clientId = String(req.body?.clientId || "");
+        if (!clientId || !session.hasClient(clientId)) return res.status(409).json({ ok: false, error: "选择 Agent 的网页已断开，请重新连接后再试" });
+        const previousAgent = session.selectedAgent;
+        if (agent === previousAgent) return res.json({ ok: true, agent, conversation: session.conversationStateSnapshot });
+        if (!session.selectAgent(agent)) return res.status(409).json({ ok: false, error: "当前 Agent 正在运行，请结束任务后再切换" });
+        if (previousAgent === "codex") stopCodexApp();
+        if (!session.beginCodexMutation()) return res.status(409).json({ ok: false, error: "当前 Agent 正在切换，请稍后重试" });
+        try {
+            if (agent === "codex") {
+                const activeThreadId = ensureSiteWorkspace(config).activeThreadId || "";
+                if (activeThreadId) {
+                    await prepareExistingThread(activeThreadId, clientId, permissionMode(req.body?.permissionMode));
+                    setActiveThread(activeThreadId, { sourceClientId: clientId }, true);
+                } else {
+                    session.beginConversation({ sourceClientId: clientId });
+                    setActiveThread("", { emptyThread: true, draftThread: true, sourceClientId: clientId }, true);
+                    await prepareDraftThread(clientId, permissionMode(req.body?.permissionMode));
+                }
+            } else {
+                const threadId = `${agent}:${crypto.randomUUID()}`;
+                session.activateConversation(threadId, clientId);
+                session.setCodexState({ busy: false, threadId, turnId: "" });
+                session.emitThread("workspace_changed", threadId, { activeThreadId: threadId, emptyThread: true, sourceClientId: clientId, conversation: session.conversationStateSnapshot });
+            }
+            res.json({ ok: true, agent, conversation: session.conversationStateSnapshot });
+        } catch (error) {
+            failPreparedConversation(error, session.conversationStateSnapshot.threadId, clientId);
+            throw error;
+        } finally {
+            session.endCodexMutation();
+        }
+    }));
+    for (const agent of ["zcode", "claude"] as const) {
+        app.post(`/agent/${agent}/turn`, route(async (req, res) => {
+            if (session.selectedAgent !== agent) return res.status(409).json({ ok: false, error: `请先选择 ${agent === "zcode" ? "ZCode" : "Claude"}` });
+            const prompt = String(req.body?.prompt || "").trim();
+            if (!prompt) return res.status(400).json({ ok: false, error: "请输入任务内容" });
+            const clientId = String(req.body?.clientId || "");
+            if (!clientId || !session.hasClient(clientId)) return res.status(409).json({ ok: false, error: "发起任务的网页已断开，请重新连接后再试" });
+            const conversation = session.conversationStateSnapshot;
+            if (conversation.status !== "ready") return res.status(409).json({ ok: false, error: "当前 Agent 尚未就绪" });
+            const threadId = conversation.threadId;
+            session.bindClient(clientId);
+            session.markConversationRunning(threadId);
+            session.setCodexState({ busy: true, threadId, turnId: "" });
+            res.json({ ok: true, threadId });
+            void runExternalTurn(agent, prompt, emit, { cwd: ensureSiteWorkspace(config).workspacePath, threadId, sourceClientId: clientId }).catch(() => undefined).finally(() => {
+                session.releaseClient(clientId);
+                session.setCodexState({ busy: false, threadId, turnId: "" });
+                session.finishConversationRun(threadId);
+            });
+        }));
+        app.post(`/agent/${agent}/interrupt`, (req, res) => {
+            const ok = session.selectedAgent === agent && interruptExternalTurn(agent);
+            res.status(ok ? 200 : 409).json({ ok, ...(ok ? {} : { error: "当前没有可停止的任务" }) });
+        });
+    }
+    app.use("/agent/codex", (_req, res, next) => {
+        if (session.selectedAgent === "codex") return next();
+        res.status(409).json({ ok: false, error: "请先选择 Codex" });
+    });
     app.get("/agent/codex/workspace", (_req, res) => {
         const workspace = ensureSiteWorkspace(config);
         res.json({ ok: true, workspace, conversation: session.conversationStateSnapshot });
@@ -420,10 +486,6 @@ export function startHttpServer() {
         const ok = await interruptCodexTurn(skillDraftRunning ? undefined : String(req.body?.threadId || ""));
         res.status(ok ? 200 : 409).json({ ok, ...(ok ? {} : { error: "当前没有可停止的任务" }) });
     }));
-    app.post("/agent/claude/turn", (req, res) => {
-        runClaudeTurn(String(req.body?.prompt || ""), emit);
-        res.json({ ok: true });
-    });
     app.use((_req, res) => res.status(404).json({ ok: false, error: "not found" }));
     app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
         logger.error("HTTP request failed", { method: req.method, path: req.path, error });
@@ -436,20 +498,12 @@ export function startHttpServer() {
         checkVersions();
         console.log(`Local URL: ${config.url}`);
         console.log(`Connect token: ${config.token}`);
+        console.log("Agent: not selected (choose Codex, ZCode, or Claude in the canvas panel)");
         console.log("Codex MCP is not installed by this command.");
         console.log("Optional MCP add: codex mcp add infinite-canvas -- npx -y @basketikun/canvas-agent@latest mcp");
         console.log("Remove manually added MCP: codex mcp remove infinite-canvas");
         if (logger.enabled) console.log(`Debug log: ${logger.filePath}`);
         logger.info("Canvas Agent started", { url: config.url, workspace: ensureSiteWorkspace(config).workspacePath, debugLog: logger.filePath });
-        const activeThreadId = initialWorkspace.activeThreadId || "";
-        if (activeThreadId && session.beginCodexMutation()) {
-            void prepareExistingThread(activeThreadId).catch(async (error) => {
-                if (!isRecoverableThreadError(error)) return failPreparedConversation(error, activeThreadId);
-                session.beginConversation();
-                setActiveThread("", { emptyThread: true, draftThread: true }, true);
-                await prepareDraftThread("", "request");
-            }).finally(() => session.endCodexMutation()).catch(() => undefined);
-        }
     });
 }
 
@@ -465,6 +519,11 @@ function routeParam(value: string | string[]) {
 
 function permissionMode(value: unknown): AgentPermissionMode {
     return value === "automatic" || value === "full" ? value : "request";
+}
+
+function agentKind(value: unknown): AgentKind {
+    if (value === "codex" || value === "zcode" || value === "claude") return value;
+    throw new Error("请选择 Codex、ZCode 或 Claude");
 }
 
 function reasoningEffort(value: unknown): CodexReasoningEffort | undefined {

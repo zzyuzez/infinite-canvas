@@ -79,6 +79,13 @@ export async function interruptCodexTurn(threadId?: string) {
     return await codexApp.interruptCurrentTurn(threadId);
 }
 
+/** 用户明确切换运行时时关闭 Codex app-server。 */
+export function stopCodexApp() {
+    codexApp?.stop();
+    codexApp = null;
+    loadedThreadId = "";
+}
+
 /** 回复当前 app-server 的待处理权限请求。 */
 export async function resolveCodexApproval(requestId: string, decision: string) {
     return Boolean(codexApp?.resolveApproval(requestId, decision));

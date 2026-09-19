@@ -12,6 +12,7 @@ type PendingRequest = { clientId: string; resolve: (value: unknown) => void; rej
 type TurnAttachment = { clientId: string; id: string; name: string; type: string; size: number; width: number; height: number; dataUrl: string };
 type ReplayEvent = { type: string; payload: Record<string, unknown> };
 export type CodexState = { busy: boolean; threadId: string; turnId: string };
+export type AgentKind = "codex" | "zcode" | "claude";
 export type McpStartupState = "starting" | "ready" | "failed" | "cancelled";
 export type ConversationState = {
     revision: number;
@@ -23,7 +24,7 @@ export type ConversationState = {
     error?: string;
 };
 type McpInventoryItem = { name: string; authStatus?: string };
-export const AGENT_PROTOCOL_VERSION = 6;
+export const AGENT_PROTOCOL_VERSION = 7;
 
 const SITE_TOOLS = new Set<ToolName>([
     "site_navigate",
@@ -53,11 +54,13 @@ export class CanvasSession {
     private boundClientId = "";
     private focusSequence = 0;
     private codexState: CodexState = { busy: false, threadId: "", turnId: "" };
+    private agentKind: AgentKind | "" = "";
     private conversationState: ConversationState;
     private conversationInventoryComplete = false;
     private preparedConversationThreadId = "";
 
-    constructor(activeThreadId = "") {
+    constructor(activeThreadId = "", agentKind: AgentKind | "" = activeThreadId ? "codex" : "") {
+        this.agentKind = agentKind;
         this.conversationState = {
             revision: 1,
             conversationId: activeThreadId || crypto.randomUUID(),
@@ -79,7 +82,25 @@ export class CanvasSession {
 
     /** 返回 Canvas Agent 当前连接状态。 */
     health() {
-        return { ok: true, protocolVersion: AGENT_PROTOCOL_VERSION, hasCanvas: Boolean(this.canvasState), clients: this.clients.size, codexBusy: this.codexState.busy, conversation: this.conversationStateSnapshot };
+        return { ok: true, protocolVersion: AGENT_PROTOCOL_VERSION, hasCanvas: Boolean(this.canvasState), clients: this.clients.size, agent: this.agentKind, codexBusy: this.codexState.busy, conversation: this.conversationStateSnapshot };
+    }
+
+    get selectedAgent() {
+        return this.agentKind;
+    }
+
+    /** 选择本次进程使用的 Agent；空值表示尚未选择，不能启动任何 Agent。 */
+    selectAgent(agent: AgentKind | "") {
+        if (this.codexState.busy || this.codexMutationBusy) return false;
+        if (agent === this.agentKind) return true;
+        this.agentKind = agent;
+        this.codexState = { busy: false, threadId: "", turnId: "" };
+        this.pendingApprovals.clear();
+        this.codexReplayEvents.clear();
+        this.codexReplayActiveItems.clear();
+        this.activateConversation("");
+        this.emitAll("agent_changed", { agent });
+        return true;
     }
 
     /** 返回 Codex 是否正在执行任务。 */
@@ -279,7 +300,7 @@ export class CanvasSession {
                 this.clientFocusOrder.set(clientId, ++this.focusSequence);
             }
         }
-        sendEvent(res, "hello", { ok: true, protocolVersion: AGENT_PROTOCOL_VERSION, clientId, workspace: { activeThreadId }, conversation: this.conversationStateSnapshot, codex: this.codexState, pendingApprovals: this.codexPendingApprovals });
+        sendEvent(res, "hello", { ok: true, protocolVersion: AGENT_PROTOCOL_VERSION, clientId, agent: this.agentKind, workspace: { activeThreadId: this.agentKind === "codex" ? activeThreadId : "" }, conversation: this.conversationStateSnapshot, codex: this.codexState, pendingApprovals: this.codexPendingApprovals });
         if (!statusOnly && activeThreadId && this.codexState.threadId === activeThreadId) this.codexReplayEvents.forEach((event) => sendEvent(res, event.type, event.payload));
         const timer = setInterval(() => sendEvent(res, "ping", { time: Date.now() }), 15000);
         res.on("close", () => {

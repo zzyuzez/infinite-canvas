@@ -123,6 +123,11 @@ export class CodexAppClient {
         }
     }
 
+    /** 用户切换到其他 Agent 时关闭空闲的 Codex app-server。 */
+    stop() {
+        this.child.kill();
+    }
+
     /** 创建不会持久化或向网页广播的草稿线程。 */
     async startSkillDraftThread(cwd: string) {
         return await this.startSilentThread("thread/start", { ...skillDraftThreadSettings(cwd), threadSource: "user" });

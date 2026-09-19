@@ -1,10 +1,11 @@
 import { Fragment } from "react";
 import { App, Button, Input, Tooltip } from "antd";
 import copyToClipboard from "copy-to-clipboard";
-import { Copy, KeyRound, Link2, PlugZap } from "lucide-react";
+import { Bot, Code2, Copy, KeyRound, Link2, PlugZap, Sparkles } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { canvasThemes } from "@/lib/canvas-theme";
+import type { AgentKind } from "@/stores/use-agent-store";
 
 const AGENT_PLUGIN_REMOVE_COMMAND = "codex plugin remove infinite-canvas";
 const AGENT_MCP_REMOVE_COMMAND = "codex mcp remove infinite-canvas";
@@ -17,9 +18,12 @@ export function AgentConnectView({
     connected,
     activity,
     connectError,
+    agentKind,
+    selectingAgent,
     onUrlChange,
     onTokenChange,
     onToggleEnabled,
+    onAgentChange,
 }: {
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
     url: string;
@@ -28,9 +32,12 @@ export function AgentConnectView({
     connected: boolean;
     activity: string;
     connectError: string;
+    agentKind: AgentKind | "";
+    selectingAgent: boolean;
     onUrlChange: (value: string) => void;
     onTokenChange: (value: string) => void;
     onToggleEnabled: () => void;
+    onAgentChange: (agent: AgentKind) => void;
 }) {
     const { t } = useTranslation();
     const { message } = App.useApp();
@@ -65,6 +72,11 @@ export function AgentConnectView({
             </div>
         </div>
     );
+    const agents: Array<{ value: AgentKind; label: string; description: string; icon: typeof Bot }> = [
+        { value: "codex", label: "Codex", description: t("agent.connect.codexDescription"), icon: Bot },
+        { value: "zcode", label: "ZCode", description: t("agent.connect.zcodeDescription"), icon: Code2 },
+        { value: "claude", label: "Claude", description: t("agent.connect.claudeDescription"), icon: Sparkles },
+    ];
     return (
         <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-4">
             <div className="space-y-4">
@@ -148,6 +160,34 @@ export function AgentConnectView({
                             </div>
                         ) : null}
                     </div>
+                </div>
+                <div className="rounded-lg border p-3" style={{ borderColor: theme.node.stroke }}>
+                    <div className="text-sm font-medium leading-5">{t("agent.connect.chooseAgent")}</div>
+                    <div className="mt-1 text-xs leading-5" style={{ color: theme.node.muted }}>{t("agent.connect.chooseAgentDescription")}</div>
+                    <div className="mt-3 grid gap-1.5">
+                        {agents.map((item) => {
+                            const selected = agentKind === item.value;
+                            const Icon = item.icon;
+                            return (
+                                <button
+                                    key={item.value}
+                                    type="button"
+                                    disabled={!connected || selectingAgent}
+                                    className="flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left transition hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-45 dark:hover:bg-white/10"
+                                    style={selected ? { background: theme.toolbar.activeBg } : undefined}
+                                    onClick={() => onAgentChange(item.value)}
+                                >
+                                    <Icon className="size-4 shrink-0" />
+                                    <span className="min-w-0 flex-1">
+                                        <span className="block text-sm font-medium">{item.label}</span>
+                                        <span className="block truncate text-xs" style={{ color: theme.node.muted }}>{item.description}</span>
+                                    </span>
+                                    <span className="text-[11px]" style={{ color: selected ? theme.node.text : theme.node.faint }}>{selected ? t("agent.connect.selected") : t("agent.connect.select")}</span>
+                                </button>
+                            );
+                        })}
+                    </div>
+                    {!connected ? <div className="mt-2 text-xs" style={{ color: theme.node.muted }}>{t("agent.connect.connectBeforeSelect")}</div> : !agentKind ? <div className="mt-2 text-xs" style={{ color: theme.node.muted }}>{t("agent.connect.noDefaultAgent")}</div> : null}
                 </div>
             </div>
         </div>

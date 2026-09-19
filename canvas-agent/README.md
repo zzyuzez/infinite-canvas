@@ -1,6 +1,6 @@
 # Infinite Canvas Agent
 
-本地 Canvas Agent 用来连接画布网页和用户电脑上的 Codex / Claude Code。本地开发时优先连接 `http://localhost:3000`，不需要先使用线上站点。
+本地 Canvas Agent 用来连接画布网页和用户电脑上的 Codex、ZCode 或 Claude Code。本地开发时优先连接 `http://localhost:3000`，不需要先使用线上站点。
 
 ## 启动
 
@@ -32,9 +32,12 @@ node dist/index.js
 ```txt
 Local URL: http://127.0.0.1:17371
 Connect token: xxxxxx
+Agent: not selected (choose Codex, ZCode, or Claude in the canvas panel)
 ```
 
 在画布右上角点击 `Agent`，填入地址和 token 后连接。
+
+连接只会建立网页通信，不会默认启动任何 AI Agent。连接成功后必须在面板中明确选择 Codex、ZCode 或 Claude；每次重启 Canvas Agent 都会回到未选择状态。Codex 会在选择后启动 app-server，ZCode 和 Claude 只会在发送第一条任务时启动对应 CLI。
 
 Codex app 插件会读取启动输出里的 Local URL 和 Connect token，并直接打开画布网页地址；Canvas Agent 不负责生成画布打开 URL。
 
@@ -132,7 +135,11 @@ default_tools_approval_mode = "approve"
 }
 ```
 
-## 侧边栏 Codex
+## 侧边栏 Agent
+
+侧边栏支持显式选择 Codex、ZCode 或 Claude，未选择时输入框保持禁用。Codex 提供完整的线程历史、模型、推理强度和 Skill 管理；ZCode 与 Claude 使用本机 CLI 执行当前任务，不会被 Canvas Agent 自动设为默认值。
+
+### Codex
 
 本地面板会把提示词发送给 Canvas Agent。Canvas Agent 使用官方 `@openai/codex` CLI 的 `codex app-server --stdio` 启动并复用同一个 Codex thread，启动时会注入 `infinite-canvas` MCP 配置并自动放行 MCP 审批，真正执行画布修改前仍由网页侧边栏二次确认。
 
@@ -140,9 +147,13 @@ default_tools_approval_mode = "approve"
 
 侧边栏上传或粘贴的图片会先发到本机 Canvas Agent，再由 Canvas Agent 临时写入本机文件并作为 app-server `localImage` 输入传给 Codex；前端会提示附件体积，单次请求体限制为 30MB。
 
-## Claude Code
+### ZCode
 
-Claude Code Adapter 代码暂时保留，但当前网页侧边栏只开放 Codex。后续开放 Claude 入口时，Canvas Agent 会调用本机 `claude -p --output-format stream-json` 并把流式 JSON 事件转发到侧边栏。
+ZCode 通过本机 `zcode --print` 执行任务。需要先在 ZCode 中安装仓库提供的 `infinite-canvas` 插件，使 CLI 会话可以访问同一个画布 MCP；安装方式见 [`plugins/infinite-canvas`](../plugins/infinite-canvas)。
+
+### Claude Code
+
+选择 Claude 后，Canvas Agent 会在发送任务时调用本机 `claude -p --output-format stream-json`，并把最终回复转发到侧边栏。
 
 如果希望 Claude Code 也能操作画布，需要给 Claude Code 添加同一个 MCP。建议用 user scope，避免 Canvas Agent 从不同目录启动时找不到配置：
 
